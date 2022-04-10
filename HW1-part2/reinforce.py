@@ -38,7 +38,10 @@ class Policy(nn.Module):
         
         ########## YOUR CODE HERE (5~10 lines) ##########
 
-        
+        self.fc1 = nn.Linear(self.observation_dim, self.hidden_size)
+        self.fc2_policy = nn.Linear(self.hidden_size, self.action_dim)
+        self.fc2_value = nn.Linear(self.hidden_size, 1)
+
         ########## END OF YOUR CODE ##########
         
         # action & reward memory
@@ -56,6 +59,14 @@ class Policy(nn.Module):
         
         ########## YOUR CODE HERE (3~5 lines) ##########
 
+        x = F.relu(self.fc1(state))
+
+        policy = self.fc2_policy(x)
+        action_prob = F.softmax(policy)
+        # print(action_prob)
+
+
+        state_value = self.fc2_value(x)
 
         ########## END OF YOUR CODE ##########
 
@@ -72,7 +83,10 @@ class Policy(nn.Module):
         """
         
         ########## YOUR CODE HERE (3~5 lines) ##########
-
+        
+        action_prob, state_value = self.forward(torch.from_numpy(state))
+        m = Categorical(action_prob)
+        action = m.sample()
 
         ########## END OF YOUR CODE ##########
         
@@ -99,6 +113,28 @@ class Policy(nn.Module):
         returns = []
 
         ########## YOUR CODE HERE (8-15 lines) ##########
+
+        loss_function = torch.nn.MSELoss()
+
+        for reward in self.rewards:
+            for j in range(len(returns)):
+                returns[j] += reward
+            returns.append(reward)
+
+        policy_loss = 0
+        for i in range(len(saved_actions)):
+            action = saved_actions[i]
+            policy_losses.append((gamma**i) * returns[i] * action.log_prob)
+            policy_loss += (gamma**i) * returns[i] * (-action.log_prob)
+
+            value_losses.append(action.value)
+        
+
+        value_loss = loss_function(torch.FloatTensor(value_losses), torch.FloatTensor(returns))
+
+        loss = value_loss + policy_loss
+
+        self.clear_memory()
 
 
         ########## END OF YOUR CODE ##########
@@ -136,14 +172,30 @@ def train(lr=0.01):
         ep_reward = 0
         t = 0
         # Uncomment the following line to use learning rate scheduler
-        #scheduler.step()
+        scheduler.step()
         
         # For each episode, only run 9999 steps so that we don't 
         # infinite loop while learning
         
         ########## YOUR CODE HERE (10-15 lines) ##########
+
+        for _ in range(9999):
+            t+=1
+            action = model.select_action(state)
+            state, reward, done, info = env.step(action)
+            ep_reward += reward
+            model.rewards.append(reward)
+
+            if done:
+                break
+            
         
-        
+        loss = model.calculate_loss()
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
         ########## END OF YOUR CODE ##########
             
         # update EWMA reward and log the results
@@ -192,5 +244,5 @@ if __name__ == '__main__':
     env.seed(random_seed)  
     torch.manual_seed(random_seed)  
     train(lr)
-    test('CartPole_0.01.pth')
+    test('CartPole_{}.pth'.format(lr))
 
