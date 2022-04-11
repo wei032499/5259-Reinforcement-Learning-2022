@@ -251,7 +251,7 @@ def train(lr=0.01):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Learning rate scheduler (optional)
-    scheduler = Scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    scheduler = Scheduler.StepLR(optimizer, step_size=200, gamma=0.9)
     
     # EWMA reward for tracking the learning progress
     ewma_reward = 0
@@ -270,10 +270,12 @@ def train(lr=0.01):
         
         ########## YOUR CODE HERE (10-15 lines) ##########
 
-        for _ in range(250):
+        for _ in range(9999):
             t += 1
             action = model.select_action(state)
             state, reward, done, info = env.step(action)
+            if reward <= -100:
+                reward = -3
             ep_reward += reward
             model.rewards.append(reward)
 
@@ -301,7 +303,7 @@ def train(lr=0.01):
         # print('Episode {}\tlength: {}\treward: {}\t ewma reward: {}\tvalue_loss: {}\tpolicy_loss: {}'.format(i_episode, t, ep_reward, ewma_reward,value_loss.item(),policy_loss.item()))
         
         # check if we have "solved" the cart pole problem
-        if ewma_reward > 100: # env.spec.reward_threshold
+        if ewma_reward > env.spec.reward_threshold: # env.spec.reward_threshold
             torch.save(model.state_dict(), './preTrained/LunarLander_{}.pth'.format(lr))
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(ewma_reward, t))
@@ -337,7 +339,7 @@ def test(name, n_episodes=10):
 if __name__ == '__main__':
     # For reproducibility, fix the random seed
     random_seed = 20  
-    lr = 0.05
+    lr = 0.01
     env = gym.make('LunarLander-v2')
     env.seed(random_seed)  
     torch.manual_seed(random_seed)  
