@@ -13,6 +13,9 @@ import torch.optim as optim
 from torch.distributions import Categorical
 import torch.optim.lr_scheduler as Scheduler
 
+# check and use GPU if available if not use CPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Define a useful tuple (optional)
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
@@ -84,7 +87,7 @@ class Policy(nn.Module):
         
         ########## YOUR CODE HERE (3~5 lines) ##########
         
-        action_prob, state_value = self.forward(torch.from_numpy(state))
+        action_prob, state_value = self.forward(torch.from_numpy(state).to(device))
         m = Categorical(action_prob)
         action = m.sample()
 
@@ -114,23 +117,31 @@ class Policy(nn.Module):
 
         ########## YOUR CODE HERE (8-15 lines) ##########
 
-        loss_function = torch.nn.MSELoss()
-
-        for reward in self.rewards:
-            for j in range(len(returns)):
-                returns[j] += reward
-            returns.append(reward)
-
-        policy_loss = 0
-        for i in range(len(saved_actions)):
-            action = saved_actions[i]
-            policy_losses.append((gamma**i) * returns[i] * action.log_prob)
-            policy_loss += (gamma**i) * returns[i] * (-action.log_prob)
-
-            value_losses.append(action.value)
+        returns = np.zeros_like(self.rewards)
+        timesteps = range(len(self.rewards))
         
+        for t in reversed(timesteps):
+            R = self.rewards[t] + gamma*R
+            returns[t] = R
+        returns = torch.tensor(returns, dtype=torch.float32).to(device)
 
-        value_loss = loss_function(torch.FloatTensor(value_losses), torch.FloatTensor(returns))
+        loss_function = torch.nn.MSELoss()
+        value_loss = loss_function(torch.cat([ a.value for a in saved_actions]), returns)
+        # value_loss = loss_function(saved_actions[0].value, torch.tensor(returns[0], dtype=torch.float32, requires_grad=True))
+        # print((saved_actions[0].value,returns[0]))
+
+        # policy_loss = 0
+        # for i in range(len(saved_actions)):
+        #     action = saved_actions[i]
+        #     policy_losses.append((gamma**i) * returns[i] * action.log_prob)
+        #     policy_loss += (gamma**i) * returns[i] * (-action.log_prob)
+        gamma_list = torch.tensor([ gamma**i for i in range(len(saved_actions))], dtype=torch.float32).to(device)
+        neg_log_prob = torch.stack([-a.log_prob for a in saved_actions])
+        policy_loss = torch.sum( gamma_list * returns * neg_log_prob)
+
+        # print(value_loss.item(), policy_loss.item())
+
+
 
         loss = value_loss + policy_loss
 
@@ -156,7 +167,7 @@ def train(lr=0.01):
     '''    
     
     # Instantiate the policy model and the optimizer
-    model = Policy()
+    model = Policy().to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Learning rate scheduler (optional)
@@ -214,7 +225,7 @@ def test(name, n_episodes=10):
     '''
         Test the learned model (no change needed)
     '''      
-    model = Policy()
+    model = Policy().to(device)
     
     model.load_state_dict(torch.load('./preTrained/{}'.format(name)))
     
