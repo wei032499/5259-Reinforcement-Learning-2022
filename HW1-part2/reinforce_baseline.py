@@ -15,51 +15,10 @@ import torch.optim.lr_scheduler as Scheduler
 
 # check and use GPU if available if not use CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = torch.device("cpu")
 
 
 # Define a useful tuple (optional)
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
-
-class ValueFunctionNet(nn.Module):
- 
-    def __init__(self):
-        super(ValueFunctionNet, self).__init__()
-        
-        # Extract the dimensionality of state and action spaces
-        self.observation_dim = env.observation_space.shape[0]
-        self.hidden_size = 256
-        
-        ########## YOUR CODE HERE (5~10 lines) ##########
-
-        self.fc1 = nn.Linear(self.observation_dim, self.hidden_size)
-        self.fc2 = nn.Linear(self.hidden_size, self.hidden_size)
-        self.fc3 = nn.Linear(self.hidden_size, 1)
-
-        ########## END OF YOUR CODE ##########
-        
-        # action & reward memory
-        self.saved_actions = []
-        self.rewards = []
-
-    def forward(self, state):
-        """
-            Forward pass of both policy and value networks
-            - The input is the state, and the outputs are the corresponding 
-              action probability distirbution and the state value
-            TODO:
-                1. Implement the forward pass for both the action and the state value
-        """
-        
-        ########## YOUR CODE HERE (3~5 lines) ##########
-
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        state_value = self.fc3(x)
-
-        ########## END OF YOUR CODE ##########
-
-        return state_value
         
 class Policy(nn.Module):
     """
@@ -91,9 +50,6 @@ class Policy(nn.Module):
         self.fc3_value = nn.Linear(self.hidden_size, 1)
 
 
-        # self.vf_net = ValueFunctionNet().to(device)
-        # self.vf_optimizer = optim.Adam(self.vf_net.parameters(), lr=0.001)
-
         ########## END OF YOUR CODE ##########
         
         # action & reward memory
@@ -123,7 +79,6 @@ class Policy(nn.Module):
         ########## END OF YOUR CODE ##########
 
         return action_prob, state_value
-        # return action_prob
 
 
     def select_action(self, state):
@@ -138,7 +93,6 @@ class Policy(nn.Module):
         ########## YOUR CODE HERE (3~5 lines) ##########
         
         action_prob, state_value = self.forward(torch.from_numpy(state).to(device))
-        # action_prob = self.forward(torch.from_numpy(state).to(device))
         m = Categorical(action_prob)
         action = m.sample()
 
@@ -146,7 +100,6 @@ class Policy(nn.Module):
         
         # save to action buffer
         self.saved_actions.append(SavedAction(m.log_prob(action), state_value))
-        # self.saved_actions.append(SavedAction(m.log_prob(action), state))
 
         return action.item()
 
@@ -169,67 +122,36 @@ class Policy(nn.Module):
 
         ########## YOUR CODE HERE (8-15 lines) ##########
 
+        # calculate Gt of every state in the trajectory
         returns = np.zeros_like(self.rewards)
         timesteps = range(len(self.rewards))
         
         for t in reversed(timesteps):
             R = self.rewards[t] + gamma*R
             returns[t] = R
-        # returns =  torch.tensor(returns, dtype=torch.float32).to(device).view(-1,1)
         returns = torch.tensor(returns, dtype=torch.float32).to(device)
       
         
-        
+        # calculate the loss of state value by MSE 
         loss_function = torch.nn.MSELoss()
-        
         values = torch.cat([a.value for a in saved_actions])
         value_loss = loss_function(values, returns)
 
-        # states = torch.FloatTensor([ a.value for a in saved_actions])
-        # values = self.vf_net(states.to(device))
-        # value_loss = loss_function(values,  returns)
-        # self.vf_optimizer.zero_grad()
-        # value_loss.backward()
-        # self.vf_optimizer.step()
-
-        # policy_loss = [-a.log_prob for a in saved_actions]
-
-        # policy_loss = torch.stack(policy_loss).sum()
-        # print(policy_loss)
-
-        # value_loss = loss_function(saved_actions[0].value, returns[0])
-        # print(value_loss)
-
-
-        # print(value_loss2,value_loss)
-
+        # make predicted values as the baseline of rewards
         with torch.no_grad():
             advantage_t = returns - values
 
+        # calculate the policy loss by policy gradient
         gamma_list = torch.tensor([ gamma**i for i in range(len(saved_actions))], dtype=torch.float32).to(device)
         neg_log_prob = torch.stack([-a.log_prob for a in saved_actions])
         policy_loss = torch.sum( gamma_list * advantage_t * neg_log_prob)
 
-
-        # policy_loss = 0
-        # for i in range(len(saved_actions)):
-        #     action = saved_actions[i]
-        #     policy_loss += (gamma**i) * advantage_t[i] * (-action.log_prob)
-        
-        # policy_loss = torch.mean( torch.stack([-a.log_prob for a in saved_actions]) * advantage_t)
-        
-        # loss =  value_loss + policy_loss
-        # loss = policy_loss
-        # print(value_loss, policy_loss)
-        # print(value_loss)
-        # print(policy_loss.item() , value_loss.item(), loss.item())
 
         self.clear_memory()
 
 
         ########## END OF YOUR CODE ##########
         
-        # return loss
         return value_loss , policy_loss
 
     def clear_memory(self):
@@ -274,9 +196,12 @@ def train(lr=0.01):
             t += 1
             action = model.select_action(state)
             state, reward, done, info = env.step(action)
+            ep_reward += reward
+
+            # reduce the punishment, make the agent prefer trying to land
             if reward <= -100:
                 reward = -3
-            ep_reward += reward
+            
             model.rewards.append(reward)
 
             if done:
@@ -284,12 +209,10 @@ def train(lr=0.01):
             
         
         value_loss , policy_loss = model.calculate_loss()
-        # loss = model.calculate_loss()
 
         optimizer.zero_grad()
         value_loss.backward()
         policy_loss.backward()
-        # loss.backward()
         optimizer.step()
 
 
@@ -299,11 +222,9 @@ def train(lr=0.01):
         ewma_reward = 0.05 * ep_reward + (1 - 0.05) * ewma_reward
         
         print('Episode {}\tlength: {}\treward: {}\t ewma reward: {}'.format(i_episode, t, ep_reward, ewma_reward))
-        # print("value_loss: ",value_loss.item() ,"policy_loss: ", policy_loss.item())
-        # print('Episode {}\tlength: {}\treward: {}\t ewma reward: {}\tvalue_loss: {}\tpolicy_loss: {}'.format(i_episode, t, ep_reward, ewma_reward,value_loss.item(),policy_loss.item()))
         
         # check if we have "solved" the cart pole problem
-        if ewma_reward > env.spec.reward_threshold: # env.spec.reward_threshold
+        if ewma_reward > env.spec.reward_threshold:
             torch.save(model.state_dict(), './preTrained/LunarLander_{}.pth'.format(lr))
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(ewma_reward, t))

@@ -66,8 +66,6 @@ class Policy(nn.Module):
 
         policy = self.fc2_policy(x)
         action_prob = F.softmax(policy)
-        # print(action_prob)
-
 
         state_value = self.fc2_value(x)
 
@@ -117,6 +115,7 @@ class Policy(nn.Module):
 
         ########## YOUR CODE HERE (8-15 lines) ##########
 
+        # calculate Gt of every state in the trajectory
         returns = np.zeros_like(self.rewards)
         timesteps = range(len(self.rewards))
         
@@ -125,22 +124,15 @@ class Policy(nn.Module):
             returns[t] = R
         returns = torch.tensor(returns, dtype=torch.float32).to(device)
 
+        # calculate the loss of state value by MSE 
         loss_function = torch.nn.MSELoss()
-        value_loss = loss_function(torch.cat([ a.value for a in saved_actions]), returns)
-        # value_loss = loss_function(saved_actions[0].value, torch.tensor(returns[0], dtype=torch.float32, requires_grad=True))
-        # print((saved_actions[0].value,returns[0]))
-
-        # policy_loss = 0
-        # for i in range(len(saved_actions)):
-        #     action = saved_actions[i]
-        #     policy_losses.append((gamma**i) * returns[i] * action.log_prob)
-        #     policy_loss += (gamma**i) * returns[i] * (-action.log_prob)
+        values = torch.cat([a.value for a in saved_actions])
+        value_loss = loss_function(values, returns)
+        
+        # calculate the policy loss by policy gradient
         gamma_list = torch.tensor([ gamma**i for i in range(len(saved_actions))], dtype=torch.float32).to(device)
         neg_log_prob = torch.stack([-a.log_prob for a in saved_actions])
         policy_loss = torch.sum( gamma_list * returns * neg_log_prob)
-
-        # print(value_loss.item(), policy_loss.item())
-
 
 
         loss = value_loss + policy_loss
