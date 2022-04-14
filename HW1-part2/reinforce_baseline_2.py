@@ -16,9 +16,9 @@ import torch.optim.lr_scheduler as Scheduler
 # check and use GPU if available if not use CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 # Define a useful tuple (optional)
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
-
         
 class Policy(nn.Module):
     """
@@ -37,13 +37,18 @@ class Policy(nn.Module):
         self.discrete = isinstance(env.action_space, gym.spaces.Discrete)
         self.observation_dim = env.observation_space.shape[0]
         self.action_dim = env.action_space.n if self.discrete else env.action_space.shape[0]
-        self.hidden_size = 128
+        self.hidden_size = 16
         
         ########## YOUR CODE HERE (5~10 lines) ##########
 
-        self.fc1 = nn.Linear(self.observation_dim, self.hidden_size)
-        self.fc2_policy = nn.Linear(self.hidden_size, self.action_dim)
-        self.fc2_value = nn.Linear(self.hidden_size, 1)
+        self.fc1_policy = nn.Linear(self.observation_dim, self.hidden_size)
+        self.fc2_policy = nn.Linear(self.hidden_size, self.hidden_size)
+        self.fc3_policy = nn.Linear(self.hidden_size, self.action_dim)
+
+        self.fc1_value = nn.Linear(self.observation_dim, self.hidden_size)
+        self.fc2_value = nn.Linear(self.hidden_size, self.hidden_size)
+        self.fc3_value = nn.Linear(self.hidden_size, 1)
+
 
         ########## END OF YOUR CODE ##########
         
@@ -62,12 +67,14 @@ class Policy(nn.Module):
         
         ########## YOUR CODE HERE (3~5 lines) ##########
 
-        x = F.relu(self.fc1(state))
-
-        policy = self.fc2_policy(x)
+        x = F.relu(self.fc1_policy(state))
+        x = F.relu(self.fc2_policy(x))
+        policy = self.fc3_policy(x)
         action_prob = F.softmax(policy, dim=0)
 
-        state_value = self.fc2_value(x)
+        x = F.relu(self.fc1_value(state))
+        x = F.relu(self.fc2_value(x))
+        state_value = self.fc3_value(x)
 
         ########## END OF YOUR CODE ##########
 
@@ -123,17 +130,22 @@ class Policy(nn.Module):
             R = self.rewards[t] + gamma*R
             returns[t] = R
         returns = torch.tensor(returns, dtype=torch.float32).to(device)
-
+        returns = (returns-returns.mean())/(returns.std())
+      
+        
         # calculate the loss of state value by MSE 
         loss_function = torch.nn.MSELoss()
         values = torch.cat([a.value for a in saved_actions])
         value_loss = loss_function(values, returns)
-        
+
+        # make predicted values as the baseline of rewards
+        with torch.no_grad():
+            advantage_t = returns - values
+
         # calculate the policy loss by policy gradient
         gamma_list = torch.tensor([ gamma**i for i in range(len(saved_actions))], dtype=torch.float32).to(device)
         neg_log_prob = torch.stack([-a.log_prob for a in saved_actions])
-        policy_loss = torch.sum( gamma_list * returns * neg_log_prob)
-
+        policy_loss = torch.sum( gamma_list * advantage_t * neg_log_prob)
 
         loss = value_loss + policy_loss
 
@@ -163,7 +175,7 @@ def train(lr=0.01):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Learning rate scheduler (optional)
-    scheduler = Scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
+    scheduler = Scheduler.StepLR(optimizer, step_size=200, gamma=0.9)
     
     # EWMA reward for tracking the learning progress
     ewma_reward = 0
@@ -183,10 +195,11 @@ def train(lr=0.01):
         ########## YOUR CODE HERE (10-15 lines) ##########
 
         for _ in range(9999):
-            t+=1
+            t += 1
             action = model.select_action(state)
             state, reward, done, info = env.step(action)
             ep_reward += reward
+
             model.rewards.append(reward)
 
             if done:
@@ -199,15 +212,17 @@ def train(lr=0.01):
         loss.backward()
         optimizer.step()
 
+
         ########## END OF YOUR CODE ##########
             
         # update EWMA reward and log the results
         ewma_reward = 0.05 * ep_reward + (1 - 0.05) * ewma_reward
+        
         print('Episode {}\tlength: {}\treward: {}\t ewma reward: {}'.format(i_episode, t, ep_reward, ewma_reward))
-
+        
         # check if we have "solved" the cart pole problem
         if ewma_reward > env.spec.reward_threshold:
-            torch.save(model.state_dict(), './preTrained/CartPole_{}.pth'.format(lr))
+            torch.save(model.state_dict(), './preTrained/LunarLander_2_{}.pth'.format(lr))
             print("Solved! Running reward is now {} and "
                   "the last episode runs to {} time steps!".format(ewma_reward, t))
             break
@@ -243,9 +258,9 @@ if __name__ == '__main__':
     # For reproducibility, fix the random seed
     random_seed = 20  
     lr = 0.01
-    env = gym.make('CartPole-v0')
+    env = gym.make('LunarLander-v2')
     env.seed(random_seed)  
     torch.manual_seed(random_seed)  
     train(lr)
-    test('CartPole_{}.pth'.format(lr))
+    test('LunarLander_2_{}.pth'.format(lr))
 
